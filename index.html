@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Voice Cleaner</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .container { background: #1e1e1e; padding: 30px; border-radius: 15px; text-align: center; width: 90%; max-width: 400px; border: 1px solid #333; }
+        h2 { color: #00e676; margin-bottom: 5px; }
+        p { color: #aaa; font-size: 0.9rem; }
+        
+        button { padding: 15px; width: 100%; margin-top: 10px; border-radius: 50px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        
+        #btnRec { background: #ff3d00; color: white; }
+        #btnStop { background: #333; color: #888; cursor: not-allowed; }
+        #btnAI { background: #2979ff; color: white; display: none; }
+        
+        .loader { display: none; border: 4px solid #333; border-top: 4px solid #00e676; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        audio { width: 100%; margin-top: 20px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🐍 Python AI Cleaner</h2>
+        <p>Fixed: Now Records True WAV</p>
+
+        <button id="btnRec">🎙️ Record</button>
+        <button id="btnStop" disabled>⏹️ Stop</button>
+        <button id="btnAI">✨ Clean with AI</button>
+        
+        <div class="loader" id="loader"></div>
+        <p id="status" style="margin-top: 15px; color: #888;">Ready.</p>
+        
+        <audio id="audioPlayer" controls></audio>
+    </div>
+
+    <script>
+        let audioContext;
+        let recorder;
+        let input;
+        let audioBlob;
+        
+        const btnRec = document.getElementById('btnRec');
+        const btnStop = document.getElementById('btnStop');
+        const btnAI = document.getElementById('btnAI');
+        const status = document.getElementById('status');
+        const loader = document.getElementById('loader');
+        const player = document.getElementById('audioPlayer');
+
+        // --- CUSTOM WAV RECORDER LOGIC ---
+        function startRecording(stream) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            input = audioContext.createMediaStreamSource(stream);
+            
+            // ScriptProcessor (creates Raw Audio Buffer)
+            recorder = audioContext.createScriptProcessor(4096, 1, 1);
+            
+            let audioData = [];
+
+            recorder.onaudioprocess = function(e) {
+                // Recording ho rahi hai...
+                if (!btnRec.disabled) return;
+                let inputData = e.inputBuffer.getChannelData(0);
+                audioData.push(new Float32Array(inputData));
+            }
+
+            input.connect(recorder);
+            recorder.connect(audioContext.destination);
+
+            return {
+                stop: function() {
+                    input.disconnect();
+                    recorder.disconnect();
+                    
+                    // Convert parts to single buffer
+                    let length = audioData.reduce((acc, chunk) => acc + chunk.length, 0);
+                    let result = new Float32Array(length);
+                    let offset = 0;
+                    for (let chunk of audioData) {
+                        result.set(chunk, offset);
+                        offset += chunk.length;
+                    }
+                    return encodeWAV(result, audioContext.sampleRate);
+                }
+            }
+        }
+
+        // Helper: Convert Raw Audio to WAV File
+        function encodeWAV(samples, sampleRate) {
+            let buffer = new ArrayBuffer(44 + samples.length * 2);
+            let view = new DataView(buffer);
+
+            // Write WAV Header
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + samples.length * 2, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, samples.length * 2, true);
+
+            // Write Audio Data
+            floatTo16BitPCM(view, 44, samples);
+
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        function floatTo16BitPCM(output, offset, input) {
+            for (let i = 0; i < input.length; i++, offset += 2) {
+                let s = Math.max(-1, Math.min(1, input[i]));
+                output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        // --- BUTTON EVENTS ---
+        let recObj;
+        
+        btnRec.onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Start Custom Recorder
+                recObj = startRecording(stream);
+
+                status.innerText = "🔴 Recording (True WAV)...";
+                status.style.color = "#ff3d00";
+                
+                btnRec.disabled = true;
+                btnRec.style.opacity = "0.5";
+                btnStop.disabled = false;
+                btnStop.style.background = "#fff";
+                btnStop.style.color = "#000";
+                btnStop.style.cursor = "pointer";
+                player.style.display = "none";
+                btnAI.style.display = "none";
+
+            } catch (err) {
+                alert("Microphone Error: " + err.message);
+            }
+        };
+
+        btnStop.onclick = () => {
+            if(recObj) {
+                audioBlob = recObj.stop(); // Stop & Get WAV Blob
+                
+                status.innerText = "Recorded. Ready to Clean.";
+                status.style.color = "#fff";
+                btnAI.style.display = "block";
+                
+                btnRec.disabled = false;
+                btnRec.style.opacity = "1";
+                btnStop.disabled = true;
+                btnStop.style.background = "#333";
+                btnStop.style.cursor = "not-allowed";
+            }
+        };
+
+        btnAI.onclick = async () => {
+            if(!audioBlob) return;
+
+            status.innerText = "Uploading to Python Brain...";
+            status.style.color = "#2979ff";
+            loader.style.display = "block";
+            btnAI.style.display = "none";
+            
+            const formData = new FormData();
+            formData.append("file", audioBlob, "recording.wav");
+
+            try {
+                const res = await fetch("/clean-audio", { 
+                    method: "POST", 
+                    body: formData 
+                });
+
+                if(!res.ok) {
+                    const txt = await res.text();
+                    throw new Error("Server Error: " + txt);
+                }
+                
+                const cleanBlob = await res.blob();
+                player.src = URL.createObjectURL(cleanBlob);
+                player.style.display = "block";
+                status.innerText = "✅ Cleaned by Python!";
+                status.style.color = "#00e676";
+
+            } catch(e) {
+                console.error(e);
+                status.innerText = "Error: " + e.message;
+                status.style.color = "red";
+            } finally {
+                loader.style.display = "none";
+                btnAI.style.display = "block";
+            }
+        };
+    </script>
+</body>
+</html>

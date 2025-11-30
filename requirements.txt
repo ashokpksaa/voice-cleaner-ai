@@ -1,0 +1,6 @@
+flask
+flask-cors
+gunicorn
+soundfile
+numpy
+DeepFilterNet
