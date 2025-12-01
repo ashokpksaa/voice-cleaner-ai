@@ -1,15 +1,26 @@
 import os
-import subprocess
-import shutil
+import torch
 from flask import Flask, request, send_file, send_from_directory
 from flask_cors import CORS
+# DeepFilterNet ko direct import kar rahe hain (No Subprocess Error)
+from df.enhance import enhance, init_df, load_audio, save_audio
 
 app = Flask(__name__, static_folder='.')
 CORS(app)
 
 print("---------------------------------------")
-print("🚀 AI SERVER: PURE DEEPFILTERNET (BEST)...")
+print("🚀 AI SERVER: DIRECT MODEL LOADING...")
 print("---------------------------------------")
+
+# --- LOAD AI MODEL ONCE (Server Start hote hi) ---
+# Isse har baar load karne ka time bachega aur Git error nahi aayega
+print("⏳ Loading DeepFilterNet Model... (Wait)")
+try:
+    # Model, State download aur load ho jayega
+    model, df_state, _ = init_df()
+    print("✅ AI Model Loaded & Ready!")
+except Exception as e:
+    print(f"❌ Model Load Error: {e}")
 
 @app.route('/')
 def index():
@@ -24,45 +35,42 @@ def clean_audio():
         file = request.files['file']
         print("🎤 Audio Received...")
 
-        # 1. Clean old files first (Safety cleanup)
-        for f in os.listdir('.'):
-            if f.startswith("temp_") or f.endswith("_DeepFilterNet3.wav"):
-                try: os.remove(f)
-                except: pass
-
-        # 2. Save New File
+        # 1. Save Input
         input_filename = "temp_input.wav"
+        output_filename = "temp_output.wav"
         file.save(input_filename)
 
-        # 3. RUN AI (No Extra Math, Just Brain)
-        print("🧠 AI Cleaning...")
+        # 2. RUN AI (Python Native Mode)
+        print("🧠 AI Cleaning Started...")
         
-        # DeepFilterNet default settings are the best (Krisp logic)
-        process = subprocess.run(
-            ["deepFilter", input_filename], 
-            capture_output=True, 
-            text=True
-        )
+        # Audio Load karo (AI ke format me)
+        audio, _ = load_audio(input_filename, sr=df_state.sr())
+        
+        # Clean karo (Ye line asli jadu hai)
+        enhanced_audio = enhance(model, df_state, audio)
+        
+        # Save karo
+        save_audio(output_filename, enhanced_audio, df_state.sr())
 
-        if process.returncode != 0:
-            print("❌ AI Error:", process.stderr)
-            return f"AI Error: {process.stderr}", 500
-
-        # 4. Find Output
-        # DFNet auto-names it: temp_input_DeepFilterNet3.wav
-        expected_output = "temp_input_DeepFilterNet3.wav"
-
-        if os.path.exists(expected_output):
-            print("✅ Sent Pure AI Audio!")
-            return send_file(expected_output, mimetype="audio/wav", as_attachment=False, download_name="cleaned_final.wav")
+        # 3. Check & Send
+        if os.path.exists(output_filename):
+            print("✅ Sent Cleaned Audio!")
+            return send_file(output_filename, mimetype="audio/wav", as_attachment=False, download_name="cleaned_ai.wav")
         else:
-            return "Output file missing", 500
+            return "AI processing failed", 500
 
     except Exception as e:
         print(f"❌ Error: {e}")
         return str(e), 500
+    
+    finally:
+        # Safai
+        try:
+            if os.path.exists("temp_input.wav"): os.remove("temp_input.wav")
+            # Output hum delete nahi kar rahe taki bhej sake
+        except:
+            pass
 
 if __name__ == '__main__':
-    # Cloud ka port lega, nahi mila to 10000 use karega
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
